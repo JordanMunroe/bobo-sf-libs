@@ -3,7 +3,7 @@
 --@shared
 --@superuser
 
-if CLIENT then
+if CLIENT and player() == owner() then
     local loglines = {}
     local trackers = {}
     local font = render.createFont('Roboto', 24)

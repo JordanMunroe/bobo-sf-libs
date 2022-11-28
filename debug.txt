@@ -40,7 +40,7 @@ if CLIENT and player() == owner() then
         render.setFont(font)
         
         for k,v in pairs(loglines) do
-            render.drawSimpleText(100, offsetY + k*24 , v)
+            render.drawSimpleText(100, offsetY + k*24 , tostring(v))
         end
         
         for k,tracker in pairs(trackers) do

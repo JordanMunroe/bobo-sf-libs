@@ -70,7 +70,7 @@ if SERVER then
             local j = json.encode(line, false)
             local lines = string.split(j, "\n")
             for k,v in pairs(lines) do
-                console.writeline(v)
+                Debug.Log(v)
             end
         else            
             net.start("debug.writeline")

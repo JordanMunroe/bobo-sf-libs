@@ -7,29 +7,32 @@ if CLIENT and player() == owner() then
     local loglines = {}
     local trackers = {}
     local font = render.createFont('Roboto', 24)
-    local sizeX, sizeY = render.getResolution()
-    
+    local sizeX, sizeY = render.getResolution()    
     local offsetY = 250
     
-    local function writeLine(line)        
+    Debug = {}
+    Debug.Log = function(line)        
         table.insert(loglines, line)
         while #loglines > 24 do table.remove(loglines, 1) end
     end
     
-    net.receive("debug.log", function(len)
-        local line = net.readString()
-        writeLine(line)
-    end)
-    
-    net.receive("debug.track", function()
+    Debug.Track = function(ent, color, size, distance)
         local tracker = {}
-        tracker.entity = net.readEntity();
-        tracker.color = net.readColor();
-        tracker.size = net.readFloat();
-        tracker.maxDistance = net.readFloat();
+        tracker.entity = ent;
+        tracker.color = color;
+        tracker.size = size;
+        tracker.maxDistance = distance;
         
         table.insert(trackers, tracker);
         while #trackers > 100 do table.remove(trackers, 1) end        
+    end
+    
+    net.receive("debug.log", function(len)
+        Debug.Log(net.readString())
+    end)
+    
+    net.receive("debug.track", function()
+        Debug.Track(net.readEntity(), net.readColor(), net.readFloat(), net.readFloat());      
     end)
     
     hook.add('drawhud', 'cl_render', function()

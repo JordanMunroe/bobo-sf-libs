@@ -1,0 +1,91 @@
+--@name Debug library
+--@author BoJaN
+--@shared
+--@superuser
+
+if CLIENT then
+    local loglines = {}
+    local trackers = {}
+    local font = render.createFont('Roboto', 24)
+    local sizeX, sizeY = render.getResolution()
+    
+    local offsetY = 250
+    
+    local function writeLine(line)        
+        table.insert(loglines, line)
+        while #loglines > 24 do table.remove(loglines, 1) end
+    end
+    
+    net.receive("debug.log", function(len)
+        local line = net.readString()
+        writeLine(line)
+    end)
+    
+    net.receive("debug.track", function()
+        local tracker = {}
+        tracker.entity = net.readEntity();
+        tracker.color = net.readColor();
+        tracker.size = net.readFloat();
+        tracker.maxDistance = net.readFloat();
+        
+        table.insert(trackers, tracker);
+        while #trackers > 100 do table.remove(trackers, 1) end        
+    end)
+    
+    hook.add('drawhud', 'cl_render', function()
+        render.setColor(Color(255,255,255))
+        render.setFont(font)
+        
+        for k,v in pairs(loglines) do
+            render.drawSimpleText(100, offsetY + k*24 , v)
+        end
+        
+        for k,tracker in pairs(trackers) do
+            local pos = tracker.entity:getPos()
+            local dist = pos:getDistance(player():getShootPos())
+            local alpha = 255 * (1-math.max(0, math.min(1, dist / tracker.maxDistance)))
+            local size = math.max(2, tracker.size / (dist/1000))
+            
+            if alpha <= 0 then continue end
+            
+            local color = tracker.color:clone()
+            color:setA(alpha)
+            
+            local screen = pos:toScreen()
+            render.setColor(color)
+            render.drawFilledCircle(screen.x, screen.y, size)
+        end
+    end)
+    enableHud(owner(), true)
+end
+
+if SERVER then
+    Debug = {}
+    
+    Debug.Log = function(line)
+        if istable(line) then
+            local j = json.encode(line, false)
+            local lines = string.split(j, "\n")
+            for k,v in pairs(lines) do
+                console.writeline(v)
+            end
+        else            
+            net.start("debug.writeline")
+            net.writeString(tostring(line))
+            net.send(owner())
+        end
+    end
+    
+    Debug.Track = function(ent, color, size, distance)
+        if not color then color = Color(0, 255, 0, 255) end
+        if not size then size = 50 end
+        if not distance then distance = 10000 end
+        
+        net.start("debug.track")
+        net.writeEntity(ent)
+        net.writeColor(color)
+        net.writeFloat(size)
+        net.writeFloat(distance)
+        net.send(owner())
+    end
+end

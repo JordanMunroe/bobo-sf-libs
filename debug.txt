@@ -3,6 +3,10 @@
 --@shared
 --@superuser
 
+Debug = {}
+Debug.Log = function() end
+Debug.Track = function() end
+
 if CLIENT and player() == owner() then
     local loglines = {}
     local trackers = {}
@@ -10,7 +14,6 @@ if CLIENT and player() == owner() then
     local sizeX, sizeY = render.getResolution()    
     local offsetY = 250
     
-    Debug = {}
     Debug.Log = function(line)        
         table.insert(loglines, line)
         while #loglines > 24 do table.remove(loglines, 1) end

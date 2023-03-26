@@ -26,22 +26,28 @@ boui.focused = nil
 boui.cursor = Vector()
 
 if SERVER then
-    net.receive("component", function()
+    -- Syncs component between clients
+    net.receive("component", function(len, ply)
         local key = net.readString()
         local component = net.readTable()
         boui.components[key] = value
         
+        local clients = find.allPlayers(function(p) return p ~= ply end)
+            
+        if net.getBytesLeft() < len then return end
+        
         net.start("component")
         net.writeString(key)
         net.writeTable(component)
-        net.send()
+        net.send(clients)
     end)
     
-    hook.add("ClientInitialized", "cl_init", function(ply)
-        net.start("components")
-        net.writeStream(json.encode(boui.components))
-        net.send(ply)
-    end)
+    -- Send components to new client
+    //hook.add("ClientInitialized", "cl_init", function(ply)
+    //    net.start("components")
+    //    net.writeStream(json.encode(boui.components))
+    //    net.send(ply)
+    //end)
 end
 
 if CLIENT then
@@ -73,10 +79,15 @@ if CLIENT then
         
         if not comp then return end
         
+        local changes = {}
         for k,v in pairs(data) do
-            comp[k] = v
+            if comp[k] ~= v then
+                changes[k] = {old = comp[k], new = v}
+                comp.data[k] = v
+                comp:netUpdate(k, v)
+            end
         end
-        comp:net()
+        comp:onNetUpdate(changes)
     end
     
     net.receive("component", function()
@@ -100,6 +111,7 @@ if CLIENT then
     boui.static.panel = panel
     
     function panel:initialize()
+        self.data = {}
         self.parent = nil
         self.netKey = nil
         
@@ -115,6 +127,37 @@ if CLIENT then
         self.background = nil
     end
     
+    
+    function panel:__newindex( index, value )
+        if index == "data" then return rawset( self, index, value ) end
+        
+        if self.data[index] ~= nil then
+            if self.data[index] ~= value then
+                self.data[index] = value
+                local cb = rawget(self, index .. "Changed")
+                if cb then cb(self, value) end
+                self:sync()
+            end
+        else
+            rawset( self, index, value )
+        end
+    end
+    
+    function panel:__index( index )
+        if index == "data" then return rawget(self, index) end
+        
+        if self.data[index] ~= nil then
+            return self.data[index]
+        else
+            return rawget( self, index )
+        end
+    end
+    
+    function panel:netUpdate(index, value)
+        local cb = rawget(self, index .. "Changed")
+        if cb then cb(self, value) end
+    end
+    
     function panel:onRender()
         if self.background then
             render.setColor(self.background)
@@ -125,23 +168,22 @@ if CLIENT then
         render.drawRectFast(0,0,self.width,self.height)
     end
     
-    function panel:sendToServer(keys)
+    function panel:sync()
         if not self.netKey then return end
         
         local tbl = {}
-        for k,v in pairs(keys) do
-           tbl[v] = self[v] 
-        end
-        printTable(tbl)
+        for k,v in pairs(self.data) do
+           tbl[k] = self.data[k]
+        end        
         
+        if net.getBytesLeft() < 1000 then return end
         net.start("component")
         net.writeString(self.netKey)
         net.writeTable(tbl)
-        net.send()        
+        net.send() 
     end
     
-    function panel:net()
-        
+    function panel:onNetUpdate(changes)        
     end
     
     function panel:onRenderOverlay() end
@@ -266,15 +308,14 @@ if CLIENT then
     local slider = class("Slider", panel)
     boui.static.slider = slider
     
-    function slider:valueChanged(newValue) end
-    
     function slider:initialize()
-        self.value = 0
-        self.min = 0
-        self.max = 1
-        self.vertical = false
-        self.dragging = false
         boui.static.panel.initialize(self)
+        self.data.value = 0
+        self.data.min = 0
+        self.data.max = 1
+        self.data.vertical = false
+        
+        self.dragging = false
     end
     
     function slider:onRender()
@@ -296,11 +337,6 @@ if CLIENT then
         end
     end
     
-    function slider:net()
-        self:valueChanged(self.value)
-        Debug.Log(self.value)
-    end
-    
     function slider:setValueFromCursor()
         local cursor = self:getCursor()
         local v = (cursor.x / self.width)
@@ -311,8 +347,6 @@ if CLIENT then
         local value = self.min + ((self.max-self.min)*v)
         if value ~= self.value then
             self.value = value
-            self:valueChanged(self.value)
-            self:sendToServer({"value"})
         end
     end
     
@@ -333,14 +367,14 @@ if CLIENT then
     
     ----- LABEL -----
     local label = class("Label", panel)
-    boui.static.label = label
-    
-    function label:initialize(text)
-        if not text then text = "" end
-        self.text = text
-        self.font = "Trebuchet18"
-        
+    boui.static.label = label    
+
+    function label:initialize(text)        
         boui.static.panel.initialize(self)
+        
+        if not text then text = "" end
+        self.data.text = text
+        self.data.font = "Trebuchet18"
     end
     
     function label:render()
@@ -356,19 +390,6 @@ if CLIENT then
         render.popMatrix()
     end
     
-    /*
-    function boui:panel()
-        local panel = boui.static.panel:new()
-        panel:init()
-        return panel
-    end
-    
-    function boui:slider()
-        local slider = class(slider, boui.static.panel)
-        slider:init()
-        function panel:onRender() end
-    end
-    */
     ----- RENDERING -----
     Screen = nil
     ScreenSize = 96

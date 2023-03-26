@@ -4,153 +4,371 @@
 --@include https://raw.githubusercontent.com/JordanMunroe/bobo-sf-libs/main/debug.txt as debug.txt
 require("debug.txt")
 
-boui = class("boui")
-boui.components = {}
-
 local C = chip()
+local screenRTname = "boui-screen"
+
+boui = class("boui")
+boui.theme = {
+    background = Color(0,0,0),
+    control = Color(80,80,80),
+    window = Color(255,255,255),
+    textPrimary = Color(0,0,0),
+    textSecondary = Color(255,255,255),
+    primary = Color(100,100,255),
+    accent = Color(255,150,100)
+}
+boui.input = {
+    buttons = {},
+    releaseQueue = {}
+}
+boui.components = {}
+boui.focused = nil
+boui.cursor = Vector()
+
+if SERVER then
+    net.receive("component", function()
+        local key = net.readString()
+        local component = net.readTable()
+        boui.components[key] = value
+        
+        net.start("component")
+        net.writeString(key)
+        net.writeTable(component)
+        net.send()
+    end)
+    
+    hook.add("ClientInitialized", "cl_init", function(ply)
+        net.start("components")
+        net.writeStream(json.encode(boui.components))
+        net.send(ply)
+    end)
+end
+
 if CLIENT then
-    local screenRTname = "boui-screen"
-    
-    boui.focused = nil
-    boui.input = {
-        buttons = {},
-        releaseQueue = {}
-    }
-    boui.cursor = Vector()
-    
-    function boui:add(component)
+    function boui:addComponent(component)
         table.insert(self.components, component)
     end
         
-    function boui:remove(component)
+    function boui:removeComponent(component)
         table.removeByValue(self.components, component)
     end
-
-    function boui:panel()
-        local panel = class("panel")
-        panel.parent = nil
-        panel.components = {}
-        panel.zIndex = 0
-        panel.position = Vector(0,0)
-        panel.width = 0
-        panel.height = 0
-        panel.transform = {
+    
+    function boui:findComponent(findFunc)
+        for k,v in pairs(self.components) do
+            if findFunc(v) then return v end
+            
+            if v.components then
+                for kk,vv in pairs(v.components) do
+                    if findFunc(vv) then return vv end
+                end
+            end
+        end 
+    end
+    
+    ----- NETWORKING -----    
+    local function updateComponent(key, data)
+        local comp = boui:findComponent(function(a)
+            return a.netKey == key
+        end)
+        
+        if not comp then return end
+        
+        for k,v in pairs(data) do
+            comp[k] = v
+        end
+        comp:net()
+    end
+    
+    net.receive("component", function()
+        local key = net.readString()
+        local new = net.readTable()
+        updateComponent(key, new)
+    end)
+    
+    net.receive("components", function()
+        net.readStream(function(data)
+            local components = json.decode(data)
+            for k,v in pairs(components) do
+                updateComponent(k, v)
+            end
+        end)
+    end)
+    
+    
+    ----- PANEL -----
+    local panel = class("Panel")
+    boui.static.panel = panel
+    
+    function panel:initialize()
+        self.parent = nil
+        self.netKey = nil
+        
+        self.components = {}
+        self.zIndex = 0
+        self.position = Vector(0,0)
+        self.width = 0
+        self.height = 0
+        self.transform = {
             scale = Vector(1,1)
         }
         
-        panel.background = Color(0,0,0)
-        
-        function panel:onRender() end
-        function panel:onMouseDown(button) end
-        function panel:onMouseUp(button) end
-        function panel:onKeyDown(key) end
-        function panel:onKeyUp(key) end
-        
-        function panel:add(component)
-            component.parent = self
-            table.insert(self.components, component)
-        end
-        
-        function panel:remove(component)
-            component.parent = nil
-            table.removeByValue(self.components, component)
-        end
-        
-        function panel:getPositionAbs()
-            local pos = self.position
-            if self.parent then pos = pos + self.parent:getPositionAbs() end
-            
-            return pos
-        end
-        
-        function panel:getCursor()
-            local pos = self:getPositionAbs()
-            local loc = boui.cursor - pos
-            local norm = Vector(
-                loc.x / (self.width * self.transform.scale.x),
-                loc.y / (self.height * self.transform.scale.y)
-            )
-            
-            return norm * Vector(self.width, self.height)
-        end
-        
-        function panel:containsMouse()
-            local curs = self:getCursor()
-            
-            return curs.x >= 0 && curs.y >= 0 && curs.x <= self.width && curs.y <= self.height
-        end
+        self.background = nil
+    end
     
-        function panel:render()
-            local mat = Matrix()
-            mat:translate(self.position)
-            mat:scale(self.transform.scale)
-            
-            render.pushMatrix(mat)
-            
-            local pos = self:getPositionAbs()
-            render.enableScissorRect(
-                pos.x,
-                pos.y,
-                pos.x + self.width  * self.transform.scale.x,
-                pos.y + self.height * self.transform.scale.y)            
-            
-            render.setColor(panel.background)
-            render.drawRectFast(0,0,self.width,self.height)
-            
-            self:onRender()
-            
-            table.sortByMember(self.components, "zIndex", true)
-            for i=1, #self.components do
-                local comp = self.components[i]
-                comp:render()
-            end
-            
-            render.disableScissorRect()
-            render.popMatrix()
+    function panel:onRender()
+        if self.background then
+            render.setColor(self.background)
+        else
+            render.setColor(boui.theme.window)
         end
         
-        function panel:mouseDown(btn)
-            table.sortByMember(self.components, "zIndex")
-            for i=1, #self.components do
-                local comp = self.components[i]
-                if comp:containsMouse() then
-                    if comp:mouseDown(btn) then
-                        return false
-                    end
+        render.drawRectFast(0,0,self.width,self.height)
+    end
+    
+    function panel:sendToServer(keys)
+        if not self.netKey then return end
+        
+        local tbl = {}
+        for k,v in pairs(keys) do
+           tbl[v] = self[v] 
+        end
+        printTable(tbl)
+        
+        net.start("component")
+        net.writeString(self.netKey)
+        net.writeTable(tbl)
+        net.send()        
+    end
+    
+    function panel:net()
+        
+    end
+    
+    function panel:onRenderOverlay() end
+    function panel:onMouseDown(button) end
+    function panel:onMouseUp(button) end
+    function panel:onKeyDown(key) end
+    function panel:onKeyUp(key) end
+    
+    function panel:addComponent(component)
+        component.parent = self
+        table.insert(self.components, component)
+    end
+    
+    function panel:removeComponent(component)
+        component.parent = nil
+        table.removeByValue(self.components, component)
+    end
+    
+    function panel:getPositionAbs()
+        local pos = self.position
+        if self.parent then pos = pos + self.parent:getPositionAbs() end
+        return pos
+    end
+    
+    function panel:getCursor()
+        local pos = self:getPositionAbs()
+        local loc = boui.cursor - pos
+        local norm = Vector(
+            loc.x / (self.width * self.transform.scale.x),
+            loc.y / (self.height * self.transform.scale.y)
+        )
+        
+        return norm * Vector(self.width, self.height)
+    end
+    
+    function panel:containsMouse()
+        local curs = self:getCursor()
+        
+        return curs.x >= 0 && curs.y >= 0 && curs.x <= self.width && curs.y <= self.height
+    end
+    
+    function panel:render()
+        local mat = Matrix()
+        mat:translate(self.position)
+        mat:scale(self.transform.scale)
+        
+        render.pushMatrix(mat)
+        
+        local pos = self:getPositionAbs()
+        render.enableScissorRect(
+            pos.x,
+            pos.y,
+            pos.x + self.width  * self.transform.scale.x,
+            pos.y + self.height * self.transform.scale.y)
+        
+        self:onRender()
+        
+        table.sortByMember(self.components, "zIndex", true)
+        for i=1, #self.components do
+            local comp = self.components[i]
+            comp:render()
+        end
+        
+        render.enableScissorRect(
+            pos.x,
+            pos.y,
+            pos.x + self.width  * self.transform.scale.x,
+            pos.y + self.height * self.transform.scale.y)
+        self:onRenderOverlay()
+        
+        render.disableScissorRect()
+        render.popMatrix()
+    end
+    
+    function panel:mouseDown(btn)
+        table.sortByMember(self.components, "zIndex")
+        for i=1, #self.components do
+            local comp = self.components[i]
+            if comp:containsMouse() then
+                if comp:mouseDown(btn) then
+                    return false
                 end
             end
+        end
+    
+    
+        table.insert(boui.input.releaseQueue, {
+            component = self,
+            button = btn
+        })
         
+        boui.focused = self
+        self:onMouseDown(btn)
+    end
+    
+    function panel:mouseUp(btn)
+        return self:onMouseUp(btn)
+    end
+    
+    function panel:keyDown(key)            
+        table.insert(boui.input.releaseQueue, {
+            component = self,
+            button = key
+        })
         
-            table.insert(boui.input.releaseQueue, {
-                component = self,
-                button = btn
-            })
-            
-            boui.focused = self
-            self:onMouseDown(btn)
+        return self:onKeyDown(key)
+    end
+    
+    function panel:keyUp(key)
+        return self:onKeyUp(key)
+    end
+    
+    function panel:add(component)
+        table.insert(self.components, component)
+    end
+        
+    function panel:remove(component)
+        table.removeByValue(self.components, component)
+    end
+    
+    ----- SLIDER -----
+    local slider = class("Slider", panel)
+    boui.static.slider = slider
+    
+    function slider:valueChanged(newValue) end
+    
+    function slider:initialize()
+        self.value = 0
+        self.min = 0
+        self.max = 1
+        self.vertical = false
+        self.dragging = false
+        boui.static.panel.initialize(self)
+    end
+    
+    function slider:onRender()
+        if self.dragging then
+            self:setValueFromCursor()
         end
         
-        function panel:mouseUp(btn)
-            return self:onMouseUp(btn)
-        end
+        render.setColor(boui.theme.control)
+        render.drawRectFast(0,0,self.width,self.height)
         
-        function panel:keyDown(key)            
-            table.insert(boui.input.releaseQueue, {
-                component = self,
-                button = key
-            })
-            
-            return self:onKeyDown(key)
-        end
+        render.setColor(boui.theme.primary)
+        local v = (self.value - self.min) / (self.max - self.min)
         
-        function panel:keyUp(key)
-            return self:onKeyUp(key)
+        if self.vertical then
+            local h = self.height*v
+            render.drawRectFast(0,self.height-h,self.width, h)
+        else
+            render.drawRectFast(0,0,self.width*v,self.height)
         end
+    end
+    
+    function slider:net()
+        self:valueChanged(self.value)
+        Debug.Log(self.value)
+    end
+    
+    function slider:setValueFromCursor()
+        local cursor = self:getCursor()
+        local v = (cursor.x / self.width)
+        if self.vertical then
+            v = 1-(cursor.y / self.height)
+        end
+        v = math.max(0, math.min(1, v))
+        local value = self.min + ((self.max-self.min)*v)
+        if value ~= self.value then
+            self.value = value
+            self:valueChanged(self.value)
+            self:sendToServer({"value"})
+        end
+    end
+    
+    function slider:onMouseDown(btn)
+        if btn == MOUSE.MOUSE2 then
+            self.dragging = true
+            self:setValueFromCursor()
+            return true
+        end
+    end
+    
+    function slider:onMouseUp(btn)
+        if btn == MOUSE.MOUSE2 then
+            self.dragging = false
+            return true
+        end
+    end
+    
+    ----- LABEL -----
+    local label = class("Label", panel)
+    boui.static.label = label
+    
+    function label:initialize(text)
+        if not text then text = "" end
+        self.text = text
+        self.font = "Trebuchet18"
         
+        boui.static.panel.initialize(self)
+    end
+    
+    function label:render()
+        local mat = Matrix()
+        mat:translate(self.position)
+        mat:scale(self.transform.scale)
+        
+        render.pushMatrix(mat)
+        self:onRender()
+        render.setColor(boui.theme.textPrimary)
+        render.setFont(self.font)
+        render.drawSimpleText(0, 0, self.text)
+        render.popMatrix()
+    end
+    
+    /*
+    function boui:panel()
+        local panel = boui.static.panel:new()
+        panel:init()
         return panel
     end
     
-    
+    function boui:slider()
+        local slider = class(slider, boui.static.panel)
+        slider:init()
+        function panel:onRender() end
+    end
+    */
     ----- RENDERING -----
     Screen = nil
     ScreenSize = 96
@@ -191,7 +409,7 @@ if CLIENT then
     
         return intersection
     end
-
+    
     local function GetCursorPos()        
         local pos = Screen:getPos()
         local eye = eyePos()
@@ -253,15 +471,19 @@ if CLIENT then
             
             for i=1, #boui.input.releaseQueue do
                 local rel = boui.input.releaseQueue[i]
-                if rel.component == boui.focused and rel.button == btn then
-                    table.remove(boui.input.releaseQueue, i)
-                    i = i-1
+                if rel then
+                    if rel.component == boui.focused and rel.button == btn then
+                        table.remove(boui.input.releaseQueue, i)
+                        i = i-1
+                    end
                 end
             end
         end
         
         for i=1, #boui.input.releaseQueue do
             local rel = boui.input.releaseQueue[i]
+            if not rel then continue end
+            
             if rel.button == btn then
                 if isMouse then
                     rel.component:mouseUp(btn)

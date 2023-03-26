@@ -1,0 +1,276 @@
+--@name boui
+--@author BoJaN
+--@shared
+--@include https://raw.githubusercontent.com/JordanMunroe/bobo-sf-libs/main/debug.txt as debug.txt
+require("debug.txt")
+
+boui = class("boui")
+boui.components = {}
+
+local C = chip()
+if CLIENT then
+    local screenRTname = "boui-screen"
+    
+    boui.focused = nil
+    boui.input = {
+        buttons = {},
+        releaseQueue = {}
+    }
+    boui.cursor = Vector()
+    
+    function boui:add(component)
+        table.insert(self.components, component)
+    end
+        
+    function boui:remove(component)
+        table.removeByValue(self.components, component)
+    end
+
+    function boui:panel()
+        local panel = class("panel")
+        panel.parent = nil
+        panel.components = {}
+        panel.zIndex = 0
+        panel.position = Vector(0,0)
+        panel.width = 0
+        panel.height = 0
+        panel.transform = {
+            scale = Vector(1,1)
+        }
+        
+        panel.background = Color(0,0,0)
+        
+        function panel:onRender() end
+        function panel:onMouseDown(button) end
+        function panel:onMouseUp(button) end
+        function panel:onKeyDown(key) end
+        function panel:onKeyUp(key) end
+        
+        function panel:add(component)
+            component.parent = self
+            table.insert(self.components, component)
+        end
+        
+        function panel:remove(component)
+            component.parent = nil
+            table.removeByValue(self.components, component)
+        end
+        
+        function panel:getPositionAbs()
+            local pos = self.position
+            if self.parent then pos = pos + self.parent:getPositionAbs() end
+            
+            return pos
+        end
+        
+        function panel:getCursor()
+            local pos = self:getPositionAbs()
+            local loc = boui.cursor - pos
+            local norm = Vector(
+                loc.x / (self.width * self.transform.scale.x),
+                loc.y / (self.height * self.transform.scale.y)
+            )
+            
+            return norm * Vector(self.width, self.height)
+        end
+        
+        function panel:containsMouse()
+            local curs = self:getCursor()
+            
+            return curs.x >= 0 && curs.y >= 0 && curs.x <= self.width && curs.y <= self.height
+        end
+    
+        function panel:render()
+            local mat = Matrix()
+            mat:translate(self.position)
+            mat:scale(self.transform.scale)
+            
+            render.pushMatrix(mat)
+            
+            local pos = self:getPositionAbs()
+            render.enableScissorRect(
+                pos.x,
+                pos.y,
+                pos.x + self.width  * self.transform.scale.x,
+                pos.y + self.height * self.transform.scale.y)            
+            
+            render.setColor(panel.background)
+            render.drawRectFast(0,0,self.width,self.height)
+            
+            self:onRender()
+            
+            table.sortByMember(self.components, "zIndex", true)
+            for i=1, #self.components do
+                local comp = self.components[i]
+                comp:render()
+            end
+            
+            render.disableScissorRect()
+            render.popMatrix()
+        end
+        
+        function panel:mouseDown(btn)
+            table.sortByMember(self.components, "zIndex")
+            for i=1, #self.components do
+                local comp = self.components[i]
+                if comp:containsMouse() then
+                    if comp:mouseDown(btn) then
+                        return false
+                    end
+                end
+            end
+        
+        
+            table.insert(boui.input.releaseQueue, {
+                component = self,
+                button = btn
+            })
+            
+            boui.focused = self
+            self:onMouseDown(btn)
+        end
+        
+        function panel:mouseUp(btn)
+            return self:onMouseUp(btn)
+        end
+        
+        function panel:keyDown(key)            
+            table.insert(boui.input.releaseQueue, {
+                component = self,
+                button = key
+            })
+            
+            return self:onKeyDown(key)
+        end
+        
+        function panel:keyUp(key)
+            return self:onKeyUp(key)
+        end
+        
+        return panel
+    end
+    
+    
+    ----- RENDERING -----
+    Screen = nil
+    ScreenSize = 96
+    CursorHolo = nil
+    function boui:CreateDisplay(size, heightOffset)
+        if not size then size = 96 end
+        if not heightOffset then heightOffset = 0 end
+        ScreenSize = size
+        
+        render.createRenderTarget(screenRTname)
+        
+        local screenMat = material.create("UnlitGeneric")
+        screenMat:setTextureRenderTarget("$basetexture", screenRTname) 
+        screenMat:setInt("$flags", 0)
+        
+        Screen = hologram.create(C:localToWorld(Vector(0,0,size/2 + heightOffset)), C:localToWorldAngles(Angle(90,0,90)), 'models/holograms/plane.mdl')
+        Screen:setSize(Vector(ScreenSize))
+        Screen:setMaterial("!"..screenMat:getName())
+        Screen:setParent(C)
+        
+        //CursorHolo = hologram.create(Vector(0,0,0), Angle(0,0,0), "models/holograms/hq_icosphere.mdl")
+    end
+    
+    -- Written by ChatGPT so I'm keeping it here, but not using it :)
+    function linePlaneIntersection(norm, origin, lineStart, lineEnd)
+        local d = norm.x * (lineEnd.x - lineStart.x) + norm.y * (lineEnd.y - lineStart.x) + norm.z * (lineEnd.z - lineStart.z)
+    
+        if d == 0 then
+            return nil -- The line is parallel to the plane or there's no intersection
+        end
+    
+        local t = ((origin.x - lineStart.x) * norm.x + (origin.y - lineStart.y) * norm.y + (origin.z - lineStart.z) * norm.z) / d
+        local intersection = Vector(
+            lineStart.x + t * (lineEnd.x - lineStart.x),
+            lineStart.y + t * (lineEnd.y - lineStart.y),
+            lineStart.z + t * (lineEnd.z - lineStart.z)
+        )
+    
+        return intersection
+    end
+
+    local function GetCursorPos()        
+        local pos = Screen:getPos()
+        local eye = eyePos()
+        local eyeEnd = eye + eyeVector() * 1000000
+        local norm = Screen:getUp()
+        local int = linePlaneIntersection(norm, pos, eye, eyeEnd) //trace.intersectRayWithPlane(eye, eyeVector() * 1000, pos, norm) // Needs permissions, maybe?
+        local loc = Screen:worldToLocal(int) + Vector(ScreenSize/2, ScreenSize/2)
+        local scrn = Vector(loc.y/ScreenSize, loc.x/ScreenSize) * 1024
+        
+        if CursorHolo then
+            CursorHolo:setPos(int)
+        end
+        return scrn
+    end
+    
+    local function RenderDisplay()
+        boui.cursor = GetCursorPos()
+        render.selectRenderTarget(screenRTname)
+        
+        table.sortByMember(boui.components, "zIndex", true)
+        for i=1, #boui.components do
+            local comp = boui.components[i]
+            comp:render()
+        end
+    end
+    
+    hook.add("renderoffscreen", "render_screen", function()
+        RenderDisplay()
+    end)
+    
+    hook.add("inputpressed", "inputpressed", function(btn)
+        boui.input.buttons[btn] = true
+        
+        if table.keyFromValue(MOUSE,btn) then
+            table.sortByMember(boui.components, "zIndex")
+            for i=1, #boui.components do
+                local comp = boui.components[i]
+                if comp:containsMouse() then
+                    if comp:mouseDown(btn) then
+                        break
+                    end
+                end
+            end
+        elseif focused then
+            boui.focused:keyDown(btn)
+        end
+    end)
+    
+    hook.add("inputreleased", "inputreleased", function(btn)
+        boui.input.buttons[btn] = false
+        local isMouse = table.keyFromValue(MOUSE,btn) ~= nil
+        
+        if boui.focused then
+            if isMouse then
+                boui.focused:mouseUp(btn)
+            else
+                boui.focused:keyUp(btn)
+            end
+            
+            for i=1, #boui.input.releaseQueue do
+                local rel = boui.input.releaseQueue[i]
+                if rel.component == boui.focused and rel.button == btn then
+                    table.remove(boui.input.releaseQueue, i)
+                    i = i-1
+                end
+            end
+        end
+        
+        for i=1, #boui.input.releaseQueue do
+            local rel = boui.input.releaseQueue[i]
+            if rel.button == btn then
+                if isMouse then
+                    rel.component:mouseUp(btn)
+                else
+                    rel.component:keyUp(btn)
+                end
+                table.remove(boui.input.releaseQueue, i)
+                i = i-1                
+            end
+        end
+    end)
+end

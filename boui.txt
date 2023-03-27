@@ -51,6 +51,28 @@ if SERVER then
 end
 
 if CLIENT then
+    boui.clipQueue = {}
+    function boui:pushClip(x, y, width, height)
+        local clip = {
+            x=x,
+            y=y,
+            width=width, 
+            height=height
+        }
+        table.insert(boui.clipQueue)
+        render.enableScissorRect(clip.x, clip.y, clip.x + clip.width, clip.y + clip.height)
+    end
+    
+    function boui:popClip()
+        table.remove(boui.clipQueue)
+        local clip = boui.clipQueue[#boui.clipQueue]
+        if clip then
+            render.enableScissorRect(clip.x, clip.y, clip.x + clip.width, clip.y + clip.height)
+        else
+            render.disableScissorRect()
+        end
+    end
+    
     function boui:addComponent(component)
         table.insert(self.components, component)
     end
@@ -219,6 +241,15 @@ if CLIENT then
         return norm * Vector(self.width, self.height)
     end
     
+    function panel:pushClip(x, y, width, height)
+        local abs = self:getPositionAbs()
+        boui:pushClip(abs.x + x, abs.y + y, width, height)
+    end
+    
+    function panel:popClip()
+        boui:popClip()
+    end
+    
     function panel:containsMouse()
         local curs = self:getCursor()
         
@@ -233,12 +264,7 @@ if CLIENT then
         render.pushMatrix(mat)
         
         local pos = self:getPositionAbs()
-        render.enableScissorRect(
-            pos.x,
-            pos.y,
-            pos.x + self.width  * self.transform.scale.x,
-            pos.y + self.height * self.transform.scale.y)
-        
+        self:pushClip(0, 0, self.width, self.height)        
         self:onRender()
         
         table.sortByMember(self.components, "zIndex", true)
@@ -246,15 +272,9 @@ if CLIENT then
             local comp = self.components[i]
             comp:render()
         end
-        
-        render.enableScissorRect(
-            pos.x,
-            pos.y,
-            pos.x + self.width  * self.transform.scale.x,
-            pos.y + self.height * self.transform.scale.y)
         self:onRenderOverlay()
         
-        render.disableScissorRect()
+        self:popClip()
         render.popMatrix()
     end
     
@@ -373,6 +393,7 @@ if CLIENT then
         boui.static.panel.initialize(self)
         
         if not text then text = "" end
+        self.data.color = nil
         self.data.text = text
         self.data.font = "Trebuchet18"
     end
@@ -384,7 +405,12 @@ if CLIENT then
         
         render.pushMatrix(mat)
         self:onRender()
-        render.setColor(boui.theme.textPrimary)
+        if self.color then
+            render.setColor(self.color)
+        else
+            render.setColor(boui.theme.textPrimary)
+        end
+        
         render.setFont(self.font)
         render.drawSimpleText(0, 0, self.text)
         render.popMatrix()

@@ -76,7 +76,7 @@ if SERVER then
                 Debug.Log(v)
             end
         else            
-            net.start("debug.writeline")
+            net.start("debug.log")
             net.writeString(tostring(line))
             net.send(owner())
         end

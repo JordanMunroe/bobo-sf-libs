@@ -132,7 +132,7 @@ if CLIENT then
     local panel = class("Panel")
     boui.static.panel = panel
     
-    function panel:initialize()
+    function panel:initialize(parent)
         self.data = {}
         self.parent = nil
         self.netKey = nil
@@ -147,6 +147,7 @@ if CLIENT then
         }
         
         self.background = nil
+        if parent then parent:addComponent(self) end
     end
     
     
@@ -264,7 +265,7 @@ if CLIENT then
         render.pushMatrix(mat)
         
         local pos = self:getPositionAbs()
-        self:pushClip(0, 0, self.width, self.height)        
+        self:pushClip(0, 0, self.width, self.height)
         self:onRender()
         
         table.sortByMember(self.components, "zIndex", true)
@@ -295,15 +296,16 @@ if CLIENT then
             button = btn
         })
         
-        boui.focused = self
-        self:onMouseDown(btn)
+        if self:onMouseDown(btn) then
+            boui.focused = self
+        end
     end
     
     function panel:mouseUp(btn)
         return self:onMouseUp(btn)
     end
     
-    function panel:keyDown(key)            
+    function panel:keyDown(key)
         table.insert(boui.input.releaseQueue, {
             component = self,
             button = key
@@ -314,22 +316,116 @@ if CLIENT then
     
     function panel:keyUp(key)
         return self:onKeyUp(key)
+    end    
+    
+    ----- LAYOUT PANEL -----
+    local layoutPanel = class("LayoutPanel", panel)
+    boui.static.layoutPanel = layoutPanel
+    
+    function layoutPanel:initialize(parent)
+        boui.static.panel.initialize(self, parent)
+        self.data.minWidth = -1
+        self.data.maxWidth = -1
+        self.data.minHeight = -1
+        self.data.maxHeight = -1
+        
+        self.data.orientation = "vertical"
+        self.data.padding = 0
     end
     
-    function panel:add(component)
-        table.insert(self.components, component)
+    function layoutPanel:addComponent(component)
+        boui.static.panel.addComponent(self, component)
+        component.layoutIndex = #self.components
     end
+    
+    function layoutPanel:removeComponent(component)
+        boui.static.panel.addComponent(self, component)
         
-    function panel:remove(component)
-        table.removeByValue(self.components, component)
+        table.sortByMember(self.components, "layoutIndex", true)
+        for k,v in pairs(self.components) do
+            v.layoutIndex = k
+        end
+    end
+    
+    function layoutPanel:performLayout()
+        local pad = self.padding
+        
+        local x = pad
+        local y = pad
+        local w = self.width
+        local h = self.height
+        
+        local performMtAuto = false
+        local performMlAuto = false
+        
+        if self.minWidth >= 0 then w = math.max(self.minWidth, w) end
+        if self.maxWidth >= 0 then w = math.min(self.maxWidth, w) end
+        if self.minHeight >= 0 then h = math.max(self.minHeight, h) end
+        if self.maxHeight >= 0 then h = math.min(self.maxHeight, h) end
+        
+        table.sortByMember(self.components, "layoutIndex", true)
+        for k,v in pairs(self.components) do
+            local mT = v.marginTop
+            local mB = v.marginBottom
+            local mL = v.marginLeft
+            local mR = v.marginRight
+            if mT == "auto" or performMtAuto then
+                if not mB then mB = 0 end
+                mT = h - y - v.height - pad - mB
+                performMtAuto = false
+            end
+            if mL == "auto" or performMlAuto then
+                if not mR then mR = 0 end
+                mL = w - x - v.width - pad - mR
+                performMlAuto = false
+            end
+            if mB == "auto" then
+                mB = 0
+                performMtAuto = true
+            end
+            if mR == "auto" then
+                mR = 0
+                performMlAuto = true
+            end
+            
+            if not mT then mT = 0 end
+            if not mB then mB = 0 end
+            if not mL then mL = 0 end
+            if not mR then mR = 0 end
+            
+            v.position.x = x + mL
+            v.position.y = y + mT
+            
+            if self.orientation == "vertical" then
+                y = y + v.height + mB
+            else
+                x = x + v.width + mR
+            end
+            
+            w = math.max(math.max(w, x + mR), v.width+mL+mR+pad*2)
+            h = math.max(math.max(h, y + mB), v.height+mT+mB+pad*2)
+        end
+        self.width = w
+        self.height = h
+    end
+    
+    function layoutPanel:onRender()
+        boui.static.panel.onRender(self)
+        //render.setColor(Color(0,0,0))
+        //render.drawRectOutline(0, 0, self.width, self.height,1) 
+    end
+    
+    function layoutPanel:render()
+        self:performLayout()
+        boui.static.panel.render(self)
     end
     
     ----- SLIDER -----
     local slider = class("Slider", panel)
     boui.static.slider = slider
     
-    function slider:initialize()
-        boui.static.panel.initialize(self)
+    function slider:initialize(parent)
+        boui.static.panel.initialize(self, parent)
         self.data.value = 0
         self.data.min = 0
         self.data.max = 1
@@ -387,16 +483,22 @@ if CLIENT then
     
     ----- LABEL -----
     local label = class("Label", panel)
-    boui.static.label = label    
+    boui.static.label = label
 
-    function label:initialize(text)        
-        boui.static.panel.initialize(self)
+    function label:initialize(text, parent)
+        boui.static.panel.initialize(self, parent)
         
         if not text then text = "" end
         self.data.color = nil
         self.data.text = text
         self.data.font = "Trebuchet18"
     end
+    
+    function label:fontChanged(font)
+        
+    end
+    
+    function label:onRender() end
     
     function label:render()
         local mat = Matrix()
@@ -405,13 +507,24 @@ if CLIENT then
         
         render.pushMatrix(mat)
         self:onRender()
+        
+        render.setFont(self.font)
+        local w,h = render.getTextSize(self.text)
+        self.width = w
+        self.height = h
+        
+        render.setColor(boui.theme.window)
+        render.drawRectFast(0,0,self.width,self.height)
+        
         if self.color then
             render.setColor(self.color)
         else
             render.setColor(boui.theme.textPrimary)
         end
         
-        render.setFont(self.font)
+        //render.setColor(Color(0,0,255))
+        //render.drawRectOutline(0, 0, self.width, self.height,1) 
+        
         render.drawSimpleText(0, 0, self.text)
         render.popMatrix()
     end
@@ -500,7 +613,7 @@ if CLIENT then
                     end
                 end
             end
-        elseif focused then
+        elseif boui.focused then
             boui.focused:keyDown(btn)
         end
     end)

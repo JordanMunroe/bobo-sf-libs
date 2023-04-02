@@ -546,7 +546,7 @@ if CLIENT then
         Screen:setSize(Vector(ScreenSize))
         Screen:setMaterial("!"..screenMat:getName())
         Screen:setParent(C)
-        
+        return Screen
         //CursorHolo = hologram.create(Vector(0,0,0), Angle(0,0,0), "models/holograms/hq_icosphere.mdl")
     end
     

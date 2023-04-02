@@ -1,8 +1,6 @@
 --@name boui
 --@author BoJaN
 --@shared
---@include https://raw.githubusercontent.com/JordanMunroe/bobo-sf-libs/main/debug.txt as debug.txt
-require("debug.txt")
 
 local C = chip()
 local screenRTname = "boui-screen"

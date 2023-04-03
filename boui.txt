@@ -529,12 +529,14 @@ if CLIENT then
     
     ----- RENDERING -----
     Screen = nil
-    ScreenSize = 96
+    ScreenWidth = 96
+    ScreenHeight = 96
     CursorHolo = nil
     function boui:CreateDisplay(size, heightOffset)
         if not size then size = 96 end
         if not heightOffset then heightOffset = 0 end
-        ScreenSize = size
+        ScreenWidth = size
+        ScreenHeight = size
         
         render.createRenderTarget(screenRTname)
         
@@ -543,9 +545,15 @@ if CLIENT then
         screenMat:setInt("$flags", 0)
         
         Screen = hologram.create(C:localToWorld(Vector(0,0,size/2 + heightOffset)), C:localToWorldAngles(Angle(90,0,90)), 'models/holograms/plane.mdl')
-        Screen:setSize(Vector(ScreenSize))
+        Screen:setSize(Vector(ScreenWidth, ScreenHeight))
         Screen:setMaterial("!"..screenMat:getName())
         Screen:setParent(C)
+        function Screen:setScreenSize(size)
+            ScreenWidth = size.x
+            ScreenHeight = size.y
+            Screen:setSize(Vector(ScreenWidth, ScreenHeight))
+        end
+        
         return Screen
         //CursorHolo = hologram.create(Vector(0,0,0), Angle(0,0,0), "models/holograms/hq_icosphere.mdl")
     end
@@ -574,8 +582,8 @@ if CLIENT then
         local eyeEnd = eye + eyeVector() * 1000000
         local norm = Screen:getUp()
         local int = linePlaneIntersection(norm, pos, eye, eyeEnd) //trace.intersectRayWithPlane(eye, eyeVector() * 1000, pos, norm) // Needs permissions, maybe?
-        local loc = Screen:worldToLocal(int) + Vector(ScreenSize/2, ScreenSize/2)
-        local scrn = Vector(loc.y/ScreenSize, loc.x/ScreenSize) * 1024
+        local loc = Screen:worldToLocal(int) + Vector(ScreenWidth/2, ScreenHeight/2)
+        local scrn = Vector(loc.y/ScreenHeight, loc.x/ScreenWidth) * 1024
         
         if CursorHolo then
             CursorHolo:setPos(int)
